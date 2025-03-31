@@ -17,8 +17,28 @@ import (
 	"unsafe"
 )
 
-// #include <stdlib.h>
-// #include <seccomp.h>
+/*
+#include <errno.h>
+#include <stdlib.h>
+#include <seccomp.h>
+
+// The following functions were added in libseccomp v2.6.0.
+#if SCMP_VER_MAJOR == 2 && SCMP_VER_MINOR < 6
+int seccomp_precompute(scmp_filter_ctx ctx) {
+	return -EOPNOTSUPP;
+}
+int seccomp_export_bpf_mem(const scmp_filter_ctx ctx, void *buf, size_t *len)  {
+	return -EOPNOTSUPP;
+}
+int seccomp_transaction_start(const scmp_filter_ctx ctx) {
+	return -EOPNOTSUPP;
+}
+int seccomp_transaction_commit(const scmp_filter_ctx ctx) {
+	return -EOPNOTSUPP;
+}
+void seccomp_transaction_reject(const scmp_filter_ctx ctx) {}
+#endif
+*/
 import "C"
 
 // Exported types
@@ -311,6 +331,8 @@ func GetArchFromString(arch string) (ScmpArch, error) {
 	case "riscv64":
 		return ArchRISCV64, nil
 	case "loongarch64":
+		return ArchLOONGARCH64, nil
+	case "loong64":
 		return ArchLOONGARCH64, nil
 	case "m68k":
 		return ArchM68K, nil
@@ -818,6 +840,26 @@ func (f *ScmpFilter) RemoveArch(arch ScmpArch) error {
 	return nil
 }
 
+// Precompute precomputes the seccomp filter for later use by [Load] and
+// similar functions. Not only does this improve performance of [Load],
+// it also ensures that the seccomp filter can be loaded in an
+// async-signal-safe manner if no changes have been made to the filter
+// since it was precomputed.
+func (f *ScmpFilter) Precompute() error {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	if !f.valid {
+		return errBadFilter
+	}
+
+	if retCode := C.seccomp_precompute(f.filterCtx); retCode != 0 {
+		return errRc(retCode)
+	}
+
+	return nil
+}
+
 // Load loads a filter context into the kernel.
 // Returns an error if the filter context is invalid or the syscall failed.
 func (f *ScmpFilter) Load() error {
@@ -961,6 +1003,25 @@ func (f *ScmpFilter) GetRawRC() (bool, error) {
 	return true, nil
 }
 
+// GetWaitKill returns the current state of WaitKill flag,
+// or an error if an issue was encountered retrieving the value.
+// See SetWaitKill for more details.
+func (f *ScmpFilter) GetWaitKill() (bool, error) {
+	val, err := f.getFilterAttr(filterAttrWaitKill)
+	if err != nil {
+		if e := checkAPI("GetWaitKill", 7, 2, 6, 0); e != nil {
+			err = e
+		}
+
+		return false, err
+	}
+	if val == 0 {
+		return false, nil
+	}
+
+	return true, nil
+}
+
 // SetBadArchAction sets the default action taken on a syscall for an
 // architecture not in the filter, or an error if an issue was encountered
 // setting the value.
@@ -1073,6 +1134,25 @@ func (f *ScmpFilter) SetRawRC(state bool) error {
 	return err
 }
 
+// SetWaitKill sets whether libseccomp should request wait killable semantics
+// when possible. Defaults to false.
+func (f *ScmpFilter) SetWaitKill(state bool) error {
+	var toSet C.uint32_t = 0x0
+
+	if state {
+		toSet = 0x1
+	}
+
+	err := f.setFilterAttr(filterAttrWaitKill, toSet)
+	if err != nil {
+		if e := checkAPI("SetWaitKill", 7, 2, 6, 0); e != nil {
+			err = e
+		}
+	}
+
+	return err
+}
+
 // SetSyscallPriority sets a syscall's priority.
 // This provides a hint to the filter generator in libseccomp about the
 // importance of this syscall. High-priority syscalls are placed
@@ -1174,6 +1254,30 @@ func (f *ScmpFilter) ExportBPF(file *os.File) error {
 	return nil
 }
 
+// ExportBPFMem is similar to [ExportBPF], except the data is written into
+// a memory and returned as []byte.
+func (f *ScmpFilter) ExportBPFMem() ([]byte, error) {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	if !f.valid {
+		return nil, errBadFilter
+	}
+
+	var len C.size_t
+	// Get the size required.
+	if retCode := C.seccomp_export_bpf_mem(f.filterCtx, unsafe.Pointer(nil), &len); retCode < 0 {
+		return nil, errRc(retCode)
+	}
+	// Get the data.
+	buf := make([]byte, int(len))
+	if retCode := C.seccomp_export_bpf_mem(f.filterCtx, unsafe.Pointer(&buf[0]), &len); retCode < 0 {
+		return nil, errRc(retCode)
+	}
+
+	return buf, nil
+}
+
 // Userspace Notification API
 
 // GetNotifFd returns the userspace notification file descriptor associated with the given
@@ -1205,4 +1309,54 @@ func NotifRespond(fd ScmpFd, scmpResp *ScmpNotifResp) error {
 // to mitigate time-of-check-time-of-use (TOCTOU) attacks as described in seccomp_notify_id_valid(2).
 func NotifIDValid(fd ScmpFd, id uint64) error {
 	return notifIDValid(fd, id)
+}
+
+// TransactionStart starts a new seccomp filter transaction that the caller can
+// use to perform any number of filter modifications which can then be
+// committed to the filter using [TransactionCommit] or rejected using
+// [TransactionReject]. It is important to note that transactions only affect
+// the seccomp filter state while it is being managed by libseccomp; seccomp
+// filters which have been loaded into the kernel can not be modified, only new
+// seccomp filters can be added on top of the existing loaded filter stack.
+func (f *ScmpFilter) TransactionStart() error {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	if !f.valid {
+		return errBadFilter
+	}
+
+	if retCode := C.seccomp_transaction_start(f.filterCtx); retCode < 0 {
+		return errRc(retCode)
+	}
+
+	return nil
+}
+
+// TransactionReject rejects a transaction started by [TransactionStart].
+func (f *ScmpFilter) TransactionReject() {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	if !f.valid {
+		return
+	}
+
+	C.seccomp_transaction_reject(f.filterCtx)
+}
+
+// TransactionReject commits a transaction started by [TransactionStart].
+func (f *ScmpFilter) TransactionCommit() error {
+	f.lock.Lock()
+	defer f.lock.Unlock()
+
+	if !f.valid {
+		return errBadFilter
+	}
+
+	if retCode := C.seccomp_transaction_commit(f.filterCtx); retCode < 0 {
+		return errRc(retCode)
+	}
+
+	return nil
 }
