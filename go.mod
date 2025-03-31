@@ -19,7 +19,7 @@ require (
 	github.com/moby/sys/user v0.3.0
 	github.com/moby/sys/userns v0.1.0
 	github.com/mrunalp/fileutils v0.5.1
-	github.com/opencontainers/runtime-spec v1.2.0
+	github.com/opencontainers/runtime-spec v1.2.1
 	github.com/opencontainers/selinux v1.11.1
 	github.com/seccomp/libseccomp-golang v0.10.1-0.20240814065753-28423ed7600d
 	github.com/sirupsen/logrus v1.9.3
@@ -37,3 +37,5 @@ require (
 	github.com/vishvananda/netns v0.0.0-20191106174202-0a2b9b5464df // indirect
 	golang.org/x/exp v0.0.0-20230224173230-c95f2b4c22f2 // indirect
 )
+
+replace github.com/seccomp/libseccomp-golang v0.10.1-0.20240814065753-28423ed7600d => github.com/senzeliu/libseccomp-golang v0.10.1-0.20250331082416-765147e41c7e
