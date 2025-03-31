@@ -21,7 +21,7 @@ require (
 	github.com/mrunalp/fileutils v0.5.1
 	github.com/opencontainers/runtime-spec v1.2.1
 	github.com/opencontainers/selinux v1.11.1
-	github.com/seccomp/libseccomp-golang v0.10.1-0.20240814065753-28423ed7600d
+	github.com/seccomp/libseccomp-golang v0.10.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635
 	github.com/urfave/cli v1.22.14
@@ -38,4 +38,4 @@ require (
 	golang.org/x/exp v0.0.0-20230224173230-c95f2b4c22f2 // indirect
 )
 
-replace github.com/seccomp/libseccomp-golang v0.10.1-0.20240814065753-28423ed7600d => github.com/senzeliu/libseccomp-golang v0.10.1-0.20250331082416-765147e41c7e
+replace github.com/seccomp/libseccomp-golang v0.10.0 => github.com/senzeliu/libseccomp-golang v0.10.1-0.20250331082416-765147e41c7e
